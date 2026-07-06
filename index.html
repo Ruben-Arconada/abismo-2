@@ -159,9 +159,17 @@
     osc.connect(gn).connect(master); osc.start(t); osc.stop(t+dur+0.03);
   }
   function buzz(p){ if(!muted && navigator.vibrate){ try{ navigator.vibrate(p); }catch(e){} } }
+  function noise(dur,vol,cutoff){ if(!actx||muted) return;
+    const t=actx.currentTime, n=Math.max(1,Math.floor(actx.sampleRate*dur)), buf=actx.createBuffer(1,n,actx.sampleRate), d=buf.getChannelData(0);
+    for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
+    const src=actx.createBufferSource(); src.buffer=buf;
+    const f=actx.createBiquadFilter(); f.type="lowpass"; f.frequency.value=cutoff||1200;
+    const gn=actx.createGain(); gn.gain.value=vol||0.3;
+    src.connect(f).connect(gn).connect(master); src.start(t); }
   const sfxJump =()=>{ tone(360,0.16,{type:"triangle",vol:0.16,to:640}); buzz(10); };
   const sfxLand =()=>{ tone(190,0.12,{type:"sine",vol:0.22,to:95});  buzz(12); };
-  const sfxFall =()=>{ tone(430,0.55,{type:"sawtooth",vol:0.20,to:70}); buzz([25,40,60]); };
+  const sfxCrash=()=>{ noise(0.2,0.5,1500); tone(320,0.5,{type:"sawtooth",vol:0.2,to:70}); tone(190,0.5,{type:"square",vol:0.12,to:48,delay:0.03}); buzz([60,40,80]); };
+  const sfxFall =()=>{ tone(760,0.5,{type:"sine",vol:0.16,to:150}); buzz([20,30]); };
   const sfxOver =()=>{ tone(200,0.5,{type:"sine",vol:0.18,to:110,delay:0.05}); };
   const sfxBiome=()=>{ tone(520,0.14,{type:"sine",vol:0.14}); tone(780,0.18,{type:"sine",vol:0.12,delay:0.12}); buzz(8); };
   // Botón de silencio (DOM, fuera del lienzo para no robar toques al juego)
@@ -178,8 +186,9 @@
   // salto variable
   const JV0=2.9, GRAV_HOLD=6.5, GRAV_FALL=13.0, HOLD_MAX=0.34, AIR_FULL=0.70;
   const COYOTE=0.22;   // margen tipo "coyote": aún puedes saltar/seguir un poco pasado el borde (menos injusto)
+  const CRASH_DUR=0.42;   // duración del "choque + grietas" antes de que la bola se deslice al abismo
 
-  const S={READY:0,RUN:1,FALL:2,OVER:3};
+  const S={READY:0,RUN:1,FALL:2,OVER:3,CRASH:4};
   let state=S.READY, best=0, lastBiome=null;
   let kL=false,kR=false;
   const joy={active:false,id:-1,cx:0,cy:0,val:0};
@@ -188,6 +197,7 @@
   let ctrl="diestro"; try{ ctrl=localStorage.getItem("abismo-ctrl")||"diestro"; }catch(e){}
   let swipeVal=0, steerPtr=-1, paused=false; const ptrs={};
   const jumpFx={x:0,y:0,t:-1};   // rastro breve donde se pulsó para saltar
+  let crashT=0, shakeX=0, shakeY=0; const cracks=[];   // secuencia cómica de caída (choque + grietas)
 
   let ballX,ballY,ballZ,vy,jumping,falling,fallT,idleT;
   let segs,frontier,lastXc;
@@ -212,7 +222,16 @@
   }
   function start(){ reset(); state=S.RUN; last=performance.now(); }
   function pressJump(){ if(state===S.RUN && !jumping && !falling){ jumping=true; vy=JV0; holdTime=0; jumpHeld=true; sfxJump(); } }
+  function makeCracks(){ cracks.length=0; const n=8;
+    for(let i=0;i<n;i++){ const ang=(i/n)*6.283+rand(-0.25,0.25), len=rand(0.45,1.0), pts=[];
+      for(let s=1;s<=4;s++){ const r=len*s/4; pts.push([Math.cos(ang)*r+rand(-0.05,0.05), Math.sin(ang)*r+rand(-0.05,0.05)]); }
+      cracks.push(pts); } }
+  function startCrash(){   // choque cómico + grietas alrededor, antes de deslizarse al abismo
+    const p=segAt(ballZ-COYOTE); if(p){ ballZ=Math.min(ballZ,p.z1); ballX=clamp(ballX,p.xc-p.half,p.xc+p.half); camZ=ballZ-CAMBACK; }
+    ballY=0; vy=0; state=S.CRASH; crashT=0; makeCracks(); sfxCrash();
+  }
   function startFall(){ state=S.FALL; falling=true; vy=-0.6; fallT=0; sfxFall(); }
+  function toOver(){ best=Math.max(best,Math.floor(ballZ)); state=S.OVER; sfxOver(); }
   function leanInput(){ let v = ctrl==="desliz" ? swipeVal : (joy.active?joy.val:0); v+=(kR?1:0)-(kL?1:0); return clamp(v,-1,1); }
 
   const motes=[]; for(let i=0;i<52;i++) motes.push({x:rand(-6,6),y:rand(-2.6,-0.2),z:rand(0,VIEW_AHEAD)});
@@ -274,12 +293,16 @@
       }
       camZ=ballZ-CAMBACK; genAhead(); segs=segs.filter(s=>s.z1>camZ-1);
       if(!jumping){ const s=segAt(ballZ);
-        if(s){ if(Math.abs(ballX-s.xc)>s.half) startFall(); }
-        else { const p=segAt(ballZ-COYOTE); if(!p||Math.abs(ballX-p.xc)>p.half) startFall(); } }   // coyote: margen pasado el borde
+        if(s){ if(Math.abs(ballX-s.xc)>s.half) startCrash(); }
+        else { const p=segAt(ballZ-COYOTE); if(!p||Math.abs(ballX-p.xc)>p.half) startCrash(); } }   // coyote: margen pasado el borde
       updateMotes();
+    } else if(state===S.CRASH){
+      crashT+=dt; camZ=ballZ-CAMBACK; updateMotes();
+      const k=Math.exp(-crashT*9)*4.5; shakeX=(Math.random()*2-1)*k; shakeY=(Math.random()*2-1)*k;   // temblor breve
+      if(crashT>CRASH_DUR){ shakeX=shakeY=0; startFall(); }   // luego se desliza al abismo
     } else if(state===S.FALL){
       ballY+=vy*dt; vy-=GRAV_FALL*1.7*dt; fallT+=dt; camZ=ballZ-CAMBACK; updateMotes();
-      if(fallT>0.7){ best=Math.max(best,Math.floor(ballZ)); state=S.OVER; sfxOver(); }
+      if(fallT>0.7){ toOver(); }
     } else if(state===S.READY){ ballX=0; ballY=reduce?0:Math.abs(Math.sin(idleT*1.3))*0.07; }
   }
 
@@ -512,10 +535,19 @@
       if(s.props) for(const pr of s.props) drawProp(pr,pal); }
   }
 
+  function drawCracks(grow){   // grietas cómicas que se abren alrededor de la bola al chocar
+    if(!cracks.length) return;
+    const o=proj(ballX,0.02,ballZ); if(!o) return;
+    g.lineJoin="round"; g.lineCap="round"; g.lineWidth=2.6; g.strokeStyle="rgba(12,12,16,0.9)";
+    for(const cr of cracks){ g.beginPath(); g.moveTo(o.x,o.y);
+      for(const [dx,dz] of cr){ const p=proj(ballX+dx*grow,0.02,ballZ+dz*grow); if(!p) break; g.lineTo(p.x,p.y); }
+      g.stroke(); }
+  }
+
   /* ---------- Bola de bolos + sombra 3D (solo si hay suelo debajo) ---------- */
   const HOLES=[[-0.17,0.0],[0.17,0.0],[0.0,0.34]];   // 2 dedos + pulgar
   function drawShadow(){
-    if(state===S.OVER||state===S.FALL) return;
+    if(state===S.OVER||state===S.FALL||state===S.CRASH) return;
     const s=segAt(ballZ); if(!s) return;                        // sin plataforma bajo la bola -> sin sombra
     if(Math.abs(ballX-s.xc) > s.half+0.04) return;              // la bola no está sobre el suelo
     const sp=proj(ballX,0,ballZ); if(!sp) return;
@@ -531,6 +563,8 @@
     drawShadow();
     const sB=FOCAL/CAMBACK, bp=proj(ballX,ballY,ballZ); if(!bp) return;
     const sy=bp.y;
+    let squash=false;   // deformación cómica al chocar
+    if(state===S.CRASH){ const k=Math.exp(-crashT*10); g.save(); g.translate(bp.x,sy); g.scale(1+0.34*k,1-0.4*k); g.translate(-bp.x,-sy); squash=true; }
     const grow=(state===S.FALL)?clamp(1+ballY*0.9,0.05,1):(1+ballY*0.9);
     const rad=Math.max(2,R*sB*grow);
     // esfera brillante (bola de bolos morada, a juego con el icono/portada)
@@ -556,6 +590,7 @@
     // contorno + brillo especular
     g.lineWidth=1.2; g.strokeStyle="rgba(20,10,44,0.5)"; g.beginPath(); g.arc(bp.x,sy,rad,0,Math.PI*2); g.stroke();
     g.beginPath(); g.arc(bp.x-rad*0.34,sy-rad*0.40,rad*0.18,0,Math.PI*2); g.fillStyle="rgba(255,255,255,0.9)"; g.fill();
+    if(squash) g.restore();
   }
 
   /* ---------- HUD, joystick, viñeta, tarjetas ---------- */
@@ -625,10 +660,14 @@
   }
 
   function render(){
-    const pal=palette((state===S.RUN||state===S.FALL||state===S.OVER)?Math.max(0,Math.floor(ballZ)):0);
+    const pal=palette(state===S.READY?0:Math.max(0,Math.floor(ballZ)));
     if(state===S.RUN){ if(lastBiome!==null && pal.name!==lastBiome) sfxBiome(); lastBiome=pal.name; }
-    drawBackground(pal); drawMotes(pal); drawPlatforms(pal); drawBall(pal);
-    if(state===S.RUN||state===S.FALL||state===S.OVER) drawHUD(pal);
+    const shaking=(state===S.CRASH); if(shaking){ g.save(); g.translate(shakeX,shakeY); }
+    drawBackground(pal); drawMotes(pal); drawPlatforms(pal);
+    if(state===S.CRASH||state===S.FALL) drawCracks(state===S.CRASH?clamp(crashT/CRASH_DUR,0,1):1);
+    drawBall(pal);
+    if(shaking) g.restore();
+    if(state!==S.READY) drawHUD(pal);
     drawJoystick(); vignette();
     if(state===S.READY) cardR("ABISMO","Izquierda: joystick  ·  Derecha: saltar\n(mantén pulsado = salto más largo)","TOCA PARA EMPEZAR");
     else if(state===S.OVER) cardR("CAÍSTE",Math.floor(ballZ)+" metros · mejor "+best,"TOCA PARA REINTENTAR");
@@ -660,6 +699,7 @@
   updateCtrlUI();
   cv.addEventListener("pointerdown",e=>{ e.preventDefault(); audioResume();
     if(state===S.READY||state===S.OVER){ firstGestureFullscreen(); start(); return; }
+    if(state===S.CRASH||state===S.FALL){ toOver(); return; }   // saltar la animación de caída con un toque
     if(state!==S.RUN||paused) return; const p=toCanvas(e);
     if(ctrl==="desliz"){ ptrs[e.pointerId]={x0:p.x,y0:p.y,t:idleT,moved:false}; }
     else { const onJoy = (ctrl==="diestro") ? (p.x<W/2) : (p.x>=W/2);   // zurdo = lados invertidos

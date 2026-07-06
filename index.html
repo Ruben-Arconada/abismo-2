@@ -154,26 +154,40 @@
 
   const motes=[]; for(let i=0;i<52;i++) motes.push({x:rand(-6,6),y:rand(-2.6,-0.2),z:rand(0,VIEW_AHEAD)});
   const updateMotes=()=>{ for(const m of motes) if(m.z<camZ+0.4){ m.z+=VIEW_AHEAD+rand(0,6); m.x=rand(-6,6); m.y=rand(-2.6,-0.2);} };
+  const bats=[]; for(let i=0;i<8;i++) bats.push({x:rand(0,1),y:rand(0.1,0.75),s:rand(0.5,1),ph:rand(0,6.28),sp:rand(0.03,0.06)});
 
   /* ---------- Biomas ---------- */
   const mix=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];
   const rgb=c=>`rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
   const rgba=(c,a)=>`rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
   const lum=c=>0.2126*c[0]+0.7152*c[1]+0.0722*c[2];
+  // Progresión narrativa: de la ciudad soleada bajando poco a poco hacia el arrepentimiento volcánico.
+  // bg = silueta de fondo · sky = cuerpo celeste (día->atardecer->noche->subsuelo) · line = líneas de carretera.
   const B=[
-    {name:"CIUDAD", skyTop:[178,192,214], fog:[206,210,220], voidTop:[50,52,62], voidBot:[8,9,14], glow:[240,186,120], top:[108,114,124], side:[72,76,86], decor:[216,212,200]},
-    {name:"MONTAÑA NEVADA", skyTop:[208,230,246], fog:[236,244,250], voidTop:[70,92,112], voidBot:[10,18,28], glow:[144,210,242], top:[238,246,250], side:[182,204,220], decor:[196,222,236]},
-    {name:"CUEVA", skyTop:[40,34,60], fog:[62,54,86], voidTop:[46,36,66], voidBot:[6,4,14], glow:[160,92,218], top:[120,106,150], side:[80,70,108], decor:[92,80,120]},
-    {name:"CUEVA DE LAVA", skyTop:[52,20,16], fog:[96,40,24], voidTop:[104,44,24], voidBot:[24,8,4], glow:[244,118,40], top:[100,82,74], side:[66,54,48], decor:[188,74,30]},
+    {name:"CIUDAD", bg:"skyline", line:1.0, sky:{c:"sun",x:0.72,y:0.42,r:24,col:[255,250,222]},
+     skyTop:[150,200,240], fog:[206,226,240], voidTop:[60,72,92], voidBot:[12,16,26], glow:[250,222,150], top:[98,104,114], side:[66,70,80], decor:[232,234,240]},
+    {name:"PRADERA", bg:"hills", line:0.35, sky:{c:"sun",x:0.70,y:0.66,r:32,col:[255,214,150]},
+     skyTop:[248,208,152], fog:[250,226,188], voidTop:[70,80,58], voidBot:[14,18,12], glow:[250,200,132], top:[120,182,110], side:[86,142,80], decor:[150,202,120]},
+    {name:"MONTAÑAS", bg:"mtns", line:0.0, sky:{c:"sun",x:0.68,y:0.82,r:30,col:[240,158,112]},
+     skyTop:[150,120,150], fog:[186,156,158], voidTop:[54,50,64], voidBot:[12,10,16], glow:[224,150,120], top:[112,120,110], side:[78,86,82], decor:[132,140,122]},
+    {name:"MONTAÑA NEVADA", bg:"peaks", line:0.0, sky:{c:"moon",x:0.74,y:0.34,r:19,col:[224,234,246]},
+     skyTop:[70,86,120], fog:[122,142,176], voidTop:[48,60,86], voidBot:[8,12,22], glow:[150,190,235], top:[226,236,246], side:[172,192,212], decor:[240,248,252]},
+    {name:"CUEVA", bg:"cave", line:0.0, sky:{c:"none"},
+     skyTop:[40,34,52], fog:[60,52,76], voidTop:[44,34,60], voidBot:[6,4,12], glow:[156,92,214], top:[112,100,130], side:[76,68,98], decor:[94,84,116]},
+    {name:"VOLCÁNICA", bg:"volcano", line:0.0, sky:{c:"none"},
+     skyTop:[46,20,18], fog:[92,42,28], voidTop:[110,46,24], voidBot:[26,8,4], glow:[255,120,40], top:[92,74,68], side:[60,48,44], decor:[188,72,30]},
   ];
-  const PER=90, BLEND=9;
+  const PER=80, BLEND=26;   // ciclos cortos para pruebas; subir PER luego para partidas más largas
   function palette(m){
     const idx=Math.floor(m/PER), local=m-idx*PER;
     const b0=B[((idx%B.length)+B.length)%B.length], b1=B[(((idx+1)%B.length)+B.length)%B.length];
     let t= local>PER-BLEND ? (local-(PER-BLEND))/BLEND : 0; t=clamp(t,0,1);
     const P={}; for(const k of ["skyTop","fog","voidTop","voidBot","glow","top","side","decor"]) P[k]=mix(b0[k],b1[k],t);
-    P.name=t>0.5?b1.name:b0.name; return P;
+    P.name=t>0.5?b1.name:b0.name; P.t=t; P.b0=b0; P.b1=b1;
+    P.line=(b0.line||0)*(1-t)+(b1.line||0)*t;
+    return P;
   }
+  const bgWeight=(pal,type)=>(pal.b0.bg===type?1-pal.t:0)+(pal.b1.bg===type?pal.t:0);
 
   function update(dt){
     idleT+=dt;
@@ -195,19 +209,92 @@
     } else if(state===S.READY){ ballX=0; ballY=reduce?0:Math.abs(Math.sin(idleT*1.3))*0.07; }
   }
 
-  /* ---------- Fondo + luz del abismo (con neblina para evitar bordes negros) ---------- */
+  /* ---------- Fondo: cielo, cuerpo celeste, siluetas por bioma y luz del abismo ---------- */
+  const prng=seed=>{ let s=seed; return ()=>{ s=(s*9301+49297)%233280; return s/233280; }; };
+  function drawSky(s,alpha){   // sol o luna con halo
+    if(!s||s.c==="none"||alpha<=0.01) return;
+    const cx=W*s.x, cy=HORIZON*s.y, r=s.r; g.globalAlpha=alpha;
+    const halo=g.createRadialGradient(cx,cy,1,cx,cy,r*4.2);
+    halo.addColorStop(0,rgba(s.col,0.5)); halo.addColorStop(1,rgba(s.col,0));
+    g.fillStyle=halo; g.fillRect(cx-r*4.2,cy-r*4.2,r*8.4,r*8.4);
+    g.fillStyle=rgb(s.col); g.beginPath(); g.arc(cx,cy,r,0,Math.PI*2); g.fill();
+    if(s.c==="moon"){ g.globalAlpha=alpha*0.18; g.fillStyle=rgb(mix(s.col,[0,0,0],0.6));
+      g.beginPath(); g.arc(cx+r*0.35,cy-r*0.25,r*0.22,0,Math.PI*2); g.arc(cx-r*0.25,cy+r*0.3,r*0.16,0,Math.PI*2); g.fill(); }
+    g.globalAlpha=1;
+  }
+  function drawSkyline(col,amp,baseY,seed0,alpha){
+    if(alpha<=0.01) return; g.globalAlpha=alpha; const rnd=prng(seed0); let x=-4;
+    while(x<W){ const bw=14+rnd()*28, bh=amp*(0.30+rnd()*0.70), top=baseY-bh;
+      g.fillStyle=col; g.fillRect(x,top,bw+1,bh+2);
+      if(rnd()>0.7) g.fillRect(x+bw*0.45,top-6-rnd()*12,2,12);
+      g.fillStyle="rgba(255,224,150,0.5)";   // ventanas cálidas
+      for(let wy=top+6; wy<baseY-3; wy+=7) for(let wx=x+3; wx<x+bw-3; wx+=6) if(rnd()>0.55) g.fillRect(wx,wy,2,2.5);
+      x+=bw+2+rnd()*5; }
+    g.globalAlpha=1;
+  }
+  function drawHills(col,amp,baseY,seed0,alpha,freq){
+    if(alpha<=0.01) return; g.globalAlpha=alpha; g.fillStyle=col; const rnd=prng(seed0);
+    const p1=rnd()*6.28,p2=rnd()*6.28; g.beginPath(); g.moveTo(0,baseY+2);
+    for(let x=0;x<=W;x+=6){ const u=x/W*6.28*freq, h=amp*(0.5+0.3*Math.sin(u+p1)+0.2*Math.sin(u*1.7+p2)); g.lineTo(x,baseY-Math.max(0,h)); }
+    g.lineTo(W,baseY+2); g.closePath(); g.fill(); g.globalAlpha=1;
+  }
+  function drawPeaks(col,snow,amp,baseY,seed0,alpha){
+    if(alpha<=0.01) return; g.globalAlpha=alpha; const rnd=prng(seed0); const pts=[[0,baseY+2]];
+    for(let x=0;x<=W;){ pts.push([x,baseY-amp*(0.45+rnd()*0.55)]); x+=16+rnd()*20; }
+    pts.push([W,baseY-amp*0.4]); pts.push([W,baseY+2]);
+    g.fillStyle=col; g.beginPath(); for(let i=0;i<pts.length;i++)(i?g.lineTo:g.moveTo).call(g,pts[i][0],pts[i][1]); g.closePath(); g.fill();
+    g.fillStyle=snow; for(let i=1;i<pts.length-2;i++){ const p=pts[i]; if(p[1]<baseY-amp*0.55){ g.beginPath(); g.moveTo(p[0],p[1]); g.lineTo(p[0]-6,p[1]+9); g.lineTo(p[0]+6,p[1]+9); g.closePath(); g.fill(); } }
+    g.globalAlpha=1;
+  }
+  function drawCave(col,alpha){   // techo de roca con estalactitas ("hemos entrado")
+    if(alpha<=0.01) return; g.globalAlpha=alpha; g.fillStyle=col;
+    g.fillRect(0,0,W,HORIZON*0.55); const rnd=prng(431); g.beginPath();
+    for(let x=0;x<W;){ const w2=8+rnd()*12, h=12+rnd()*46; g.moveTo(x,0); g.lineTo(x+w2,0); g.lineTo(x+w2*0.5,h); g.closePath(); x+=w2+8+rnd()*22; }
+    g.fill(); g.globalAlpha=1;
+  }
+  function drawVolcano(col,glow,amp,baseY,seed0,alpha){
+    if(alpha<=0.01) return; g.globalAlpha=alpha; const rnd=prng(seed0); const pts=[[0,baseY+2]];
+    for(let x=0;x<=W;){ pts.push([x,baseY-amp*(0.4+rnd()*0.6)]); x+=20+rnd()*22; }
+    pts.push([W,baseY+2]);
+    g.fillStyle=col; g.beginPath(); for(let i=0;i<pts.length;i++)(i?g.lineTo:g.moveTo).call(g,pts[i][0],pts[i][1]); g.closePath(); g.fill();
+    g.globalAlpha=alpha*(0.5+0.5*Math.abs(Math.sin(idleT*3))); g.fillStyle=rgba(glow,0.5);   // brillo de lava entre picos
+    for(let i=1;i<pts.length-2;i++){ g.beginPath(); g.arc(pts[i][0],baseY,5,0,Math.PI*2); g.fill(); }
+    g.globalAlpha=1;
+  }
+  function drawBats(weight){
+    g.globalAlpha=clamp(weight,0,1); g.strokeStyle="rgba(8,3,5,0.92)";
+    for(const b of bats){ const bx=((b.x-idleT*b.sp)%1+1)%1, x=bx*W, y=HORIZON*(0.12+b.y*0.7);
+      const sz=6+b.s*7, flap=Math.sin(idleT*11+b.ph)*0.5; g.lineWidth=Math.max(1,sz*0.16);
+      g.beginPath(); g.moveTo(x-sz,y+flap*sz*0.5); g.quadraticCurveTo(x-sz*0.4,y-sz*0.55,x,y);
+      g.quadraticCurveTo(x+sz*0.4,y-sz*0.55,x+sz,y+flap*sz*0.5); g.stroke(); }
+    g.globalAlpha=1;
+  }
+  function drawLava(weight){
+    g.globalAlpha=clamp(weight,0,1); const cx=W/2, cy=H+10, fl=0.8+0.2*Math.sin(idleT*4);
+    const gr=g.createRadialGradient(cx,cy,10,cx,cy,H*0.7);
+    gr.addColorStop(0,`rgba(255,140,45,${0.45*fl})`); gr.addColorStop(0.4,`rgba(230,70,20,${0.16*fl})`); gr.addColorStop(1,"rgba(200,40,10,0)");
+    g.fillStyle=gr; g.fillRect(0,HORIZON,W,H-HORIZON); g.globalAlpha=1;
+  }
+  function drawHorizon(b,baseY,alpha){
+    if(alpha<=0.01) return;
+    const far=rgb(mix(b.fog,b.voidTop,0.5)), near=rgb(mix(b.fog,b.voidTop,0.72));
+    switch(b.bg){
+      case "skyline": drawSkyline(near,44,baseY,771,alpha); break;
+      case "hills": drawHills(far,24,baseY,313,alpha*0.9,1.5); drawHills(near,38,baseY,771,alpha,0.9); break;
+      case "mtns": drawHills(far,40,baseY,313,alpha*0.9,1.1); drawHills(near,64,baseY,771,alpha,0.7); break;
+      case "peaks": drawPeaks(near,rgb(b.decor),80,baseY,517,alpha); break;
+      case "cave": drawCave(rgb(mix(b.voidTop,[0,0,0],0.35)),alpha); break;
+      case "volcano": drawVolcano(rgb(mix(b.voidTop,[0,0,0],0.4)),b.glow,64,baseY,617,alpha); break;
+    }
+  }
   function drawBackground(pal){
     let gr=g.createLinearGradient(0,0,0,HORIZON+40);
     gr.addColorStop(0,rgb(pal.skyTop)); gr.addColorStop(1,rgb(pal.fog));
     g.fillStyle=gr; g.fillRect(0,0,W,HORIZON+40);
-    if(lum(pal.skyTop)>150){ const sun=g.createRadialGradient(W*0.72,HORIZON*0.5,4,W*0.72,HORIZON*0.5,150);
-      sun.addColorStop(0,"rgba(255,255,238,0.5)"); sun.addColorStop(1,"rgba(255,255,238,0)"); g.fillStyle=sun; g.fillRect(0,0,W,HORIZON+40); }
-    const ridge=(amp,step,col,seed0)=>{ g.fillStyle=col; g.beginPath(); g.moveTo(0,HORIZON); let seed=seed0;
-      for(let x=0;x<=W;x+=step){ seed=(seed*9301+49297)%233280; g.lineTo(x,HORIZON-(seed/233280)*amp); }
-      g.lineTo(W,HORIZON+2); g.lineTo(0,HORIZON+2); g.closePath(); g.fill(); };
-    ridge(30,34,rgb(mix(pal.fog,pal.voidTop,0.5)),771);
-    ridge(18,22,rgb(mix(pal.fog,pal.voidTop,0.72)),313);
-    // abismo: borde superior con neblina (no negro) -> luz del bioma abajo
+    drawSky(pal.b0.sky,1-pal.t); drawSky(pal.b1.sky,pal.t);          // sol/luna (cross-fade)
+    const baseY=HORIZON+1;
+    drawHorizon(pal.b0,baseY,1-pal.t); drawHorizon(pal.b1,baseY,pal.t); // siluetas (cross-fade)
+    const volc=bgWeight(pal,"volcano"); if(volc>0.02) drawBats(volc);
     let gv=g.createLinearGradient(0,HORIZON,0,H);
     gv.addColorStop(0,rgb(mix(pal.voidTop,pal.fog,0.35)));
     gv.addColorStop(0.4,rgb(pal.voidTop));
@@ -217,6 +304,7 @@
     const glow=g.createRadialGradient(W/2,H+20,10,W/2,H+20,H*0.92);
     glow.addColorStop(0,rgba(pal.glow,0.58)); glow.addColorStop(0.5,rgba(pal.glow,0.17)); glow.addColorStop(1,rgba(pal.glow,0));
     g.fillStyle=glow; g.fillRect(0,HORIZON,W,H-HORIZON);
+    if(volc>0.02) drawLava(volc);
   }
   function drawMotes(pal){
     const light=lum(pal.skyTop)>150;
@@ -294,10 +382,24 @@
       g.beginPath(); g.arc(p.x,p.y,r,0,Math.PI*2); g.fill();
     }
   }
+  function drawLane(s,pal){   // líneas discontinuas blancas de carretera (ciudad/pradera)
+    const a=pal.line; if(a<=0.01) return;
+    const col=rgb(mix(pal.decor,[255,255,255],0.35)), z1=s.z1, hw=0.09, step=1.6, dash=0.8;
+    let z=Math.ceil(Math.max(s.z0,camZ+0.3)/step)*step;
+    for(; z<z1; z+=step){
+      const zb=Math.min(z+dash,z1);
+      const p1=proj(s.xc-hw,0.02,z),p2=proj(s.xc+hw,0.02,z),p3=proj(s.xc+hw,0.02,zb),p4=proj(s.xc-hw,0.02,zb);
+      if(!p1||!p2||!p3||!p4) continue;
+      const fog=clamp((z-camZ)/FOG_DIST,0,1); if(fog>0.9) continue;
+      g.globalAlpha=a*(1-fog*0.55); g.fillStyle=col;
+      g.beginPath(); g.moveTo(p1.x,p1.y); g.lineTo(p2.x,p2.y); g.lineTo(p3.x,p3.y); g.lineTo(p4.x,p4.y); g.closePath(); g.fill();
+    }
+    g.globalAlpha=1;
+  }
   function drawPlatforms(pal){
     const ord=[...segs].sort((a,b)=>b.z1-a.z1);
     // por losa, de lejos a cerca: la losa cercana (sólida) tapa a la lejana, y la transparencia del faldón solo deja ver el fondo o losas ya pintadas
-    for(const s of ord){ drawWalls(s,pal); drawBevel(s,pal); drawTop(s,pal); }
+    for(const s of ord){ drawWalls(s,pal); drawBevel(s,pal); drawTop(s,pal); if(pal.line>0.01) drawLane(s,pal); }
   }
 
   /* ---------- Bola de bolos + sombra 3D (solo si hay suelo debajo) ---------- */

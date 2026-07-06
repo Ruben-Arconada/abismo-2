@@ -297,8 +297,8 @@
       }
       camZ=ballZ-CAMBACK; genAhead(); segs=segs.filter(s=>s.z1>camZ-1);
       if(state===S.RUN && !jumping){ const s=segAt(ballZ);
-        if(s){ if(Math.abs(ballX-s.xc)>s.half) startFall(); }
-        else { const p=segAt(ballZ-COYOTE); if(!p||Math.abs(ballX-p.xc)>p.half) startFall(); } }   // no saltó (coyote incluido) -> empieza a caer avanzando
+        if(s){ if(Math.abs(ballX-s.xc)>s.half-0.14) startFall(); }   // lateral un pelín más ajustado
+        else { const p=segAt(ballZ-COYOTE); if(!p||Math.abs(ballX-p.xc)>p.half-0.14) startFall(); } }
       updateMotes();
     } else if(state===S.FALL){   // no saltó: avanza y cae -> choca con la pared del siguiente tramo, o se pierde en el vacío
       ballZ+=fallVz*dt; vy-=GRAV_FALL*dt; ballY+=vy*dt; fallT+=dt; camZ=ballZ-CAMBACK; updateMotes();
@@ -500,13 +500,20 @@
     }
     g.globalAlpha=1;
   }
-  function drawProp(pr,pal){   // billboard en el borde de la plataforma, escalado por profundidad
+  function drawProp(pr,pal,seg){   // billboard en el borde de la plataforma, escalado por profundidad
     const base=proj(pr.x,0,pr.z); if(!base) return;
     if(base.y<-30||base.y>H+30) return;
     const fog=clamp((pr.z-camZ)/FOG_DIST,0,1); if(fog>0.94) return;
     const u=base.s*pr.s, bx=base.x, by=base.y, pw=Math.max(1,u*0.05);
     const F=c=>rgb(mix(c,pal.fog,fog*0.7));
-    g.fillStyle=rgba(pal.voidBot,0.3); g.beginPath(); g.ellipse(bx,by,u*0.24,u*0.09,0,0,Math.PI*2); g.fill();   // sombra: ancla el prop
+    if(seg){   // sombra recortada a la propia losa: no flota fuera de la carretera
+      g.save();
+      const nz=Math.max(seg.z0,camZ+0.5), fz=seg.z1, hw=seg.half;
+      const q1=proj(seg.xc-hw,0,nz),q2=proj(seg.xc+hw,0,nz),q3=proj(seg.xc+hw,0,fz),q4=proj(seg.xc-hw,0,fz);
+      if(q1&&q2&&q3&&q4){ g.beginPath(); g.moveTo(q1.x,q1.y); g.lineTo(q2.x,q2.y); g.lineTo(q3.x,q3.y); g.lineTo(q4.x,q4.y); g.closePath(); g.clip(); }
+      g.fillStyle=rgba(pal.voidBot,0.32); g.beginPath(); g.ellipse(bx,by,u*0.24,u*0.09,0,0,Math.PI*2); g.fill();
+      g.restore();
+    }
     if(pr.type==="farola"){
       const H0=u*1.7; g.fillStyle=F([120,124,132]); g.fillRect(bx-pw/2,by-H0,pw,H0);
       g.fillStyle=F([96,98,106]); g.fillRect(bx-u*0.13,by-H0-pw,u*0.26,pw*1.6);
@@ -549,13 +556,7 @@
     const ord=[...segs].sort((a,b)=>b.z1-a.z1);
     // por losa, de lejos a cerca: la losa cercana (sólida) tapa a la lejana, y la transparencia del faldón solo deja ver el fondo o losas ya pintadas
     for(const s of ord){ drawWalls(s,pal); drawBevel(s,pal); drawTop(s,pal); if(pal.line>0.01) drawLane(s,pal);
-      if(s.props) for(const pr of s.props) if(pr.z>=ballZ) drawProp(pr,pal); }   // solo los que están por delante de la bola
-  }
-  function drawNearProps(pal){   // props más cercanos que la bola: DESPUÉS de la bola, para que la tapen (profundidad correcta)
-    const near=[];
-    for(const s of segs) if(s.props) for(const pr of s.props) if(pr.z<ballZ) near.push(pr);
-    near.sort((a,b)=>b.z-a.z);
-    for(const pr of near) drawProp(pr,pal);
+      if(s.props) for(const pr of [...s.props].sort((a,b)=>b.z-a.z)) drawProp(pr,pal,s); }   // props ordenados por distancia, con su losa
   }
 
   function drawCracks(grow,pal){   // rotura sobre la PARED frontal del siguiente tramo, contenida en ella
@@ -606,11 +607,11 @@
     const rad=Math.max(2,R*sB*grow);
     // esfera brillante (bola de bolos morada, a juego con el icono/portada)
     const grd=g.createRadialGradient(bp.x-rad*0.34,sy-rad*0.40,rad*0.06, bp.x,sy,rad);
-    grd.addColorStop(0,"#f0e6ff"); grd.addColorStop(0.26,"#9a76d8"); grd.addColorStop(0.60,"#5b3aa0"); grd.addColorStop(1,"#241546");
+    grd.addColorStop(0,"#cdb8ea"); grd.addColorStop(0.28,"#8b6ac6"); grd.addColorStop(0.62,"#523394"); grd.addColorStop(1,"#221443");
     g.beginPath(); g.arc(bp.x,sy,rad,0,Math.PI*2); g.fillStyle=grd; g.fill();
     g.save(); g.beginPath(); g.arc(bp.x,sy,rad,0,Math.PI*2); g.clip();
     // veta de mármol sutil
-    g.globalAlpha=0.16; g.strokeStyle="#e2d2ff"; g.lineWidth=rad*0.12;
+    g.globalAlpha=0.1; g.strokeStyle="#d8c8f2"; g.lineWidth=rad*0.12;
     g.beginPath(); g.arc(bp.x+rad*0.25,sy+rad*0.15,rad*0.95,Math.PI*0.85,Math.PI*1.65); g.stroke(); g.globalAlpha=1;
     // agujeros de dedos (giran con el rodar)
     const roll=ballZ*3.0;
@@ -621,12 +622,14 @@
       g.lineWidth=Math.max(0.5,rad*0.028); g.strokeStyle=`rgba(214,198,255,${0.28*face})`;
       g.beginPath(); g.ellipse(hx,hy,hr,hr*(0.5+0.5*face),0,Math.PI*0.1,Math.PI*0.9); g.stroke(); }
     g.restore();
-    // luz de borde (separa la bola de fondos oscuros como la cueva o la lava)
-    g.lineWidth=Math.max(1,rad*0.05); g.strokeStyle="rgba(198,176,255,0.45)";
-    g.beginPath(); g.arc(bp.x,sy,rad*0.97,Math.PI*0.08,Math.PI*0.62); g.stroke();
-    // contorno + brillo especular
+    // luz de borde sutil (solo para separar de fondos oscuros)
+    g.lineWidth=Math.max(1,rad*0.045); g.strokeStyle="rgba(184,164,236,0.22)";
+    g.beginPath(); g.arc(bp.x,sy,rad*0.97,Math.PI*0.1,Math.PI*0.58); g.stroke();
+    // contorno + destello especular suave (degradado, no un punto blanco duro)
     g.lineWidth=1.2; g.strokeStyle="rgba(20,10,44,0.5)"; g.beginPath(); g.arc(bp.x,sy,rad,0,Math.PI*2); g.stroke();
-    g.beginPath(); g.arc(bp.x-rad*0.34,sy-rad*0.40,rad*0.18,0,Math.PI*2); g.fillStyle="rgba(255,255,255,0.9)"; g.fill();
+    const sx=bp.x-rad*0.32, syy=sy-rad*0.38, sp=g.createRadialGradient(sx,syy,0.5,sx,syy,rad*0.34);
+    sp.addColorStop(0,"rgba(255,252,255,0.5)"); sp.addColorStop(1,"rgba(255,252,255,0)");
+    g.fillStyle=sp; g.beginPath(); g.arc(sx,syy,rad*0.34,0,Math.PI*2); g.fill();
     if(squash) g.restore();
   }
 
@@ -702,7 +705,6 @@
     drawBackground(pal); drawMotes(pal); drawPlatforms(pal);
     if(state===S.CRASH) drawCracks(clamp(crashT/CRASH_DUR,0,1), pal);
     drawBall(pal);
-    drawNearProps(pal);   // props cercanos por delante de la bola
     if(state!==S.READY) drawHUD(pal);
     drawJoystick(); vignette();
     if(state===S.READY) cardR("ABISMO","Izquierda: joystick  ·  Derecha: saltar\n(mantén pulsado = salto más largo)","TOCA PARA EMPEZAR");

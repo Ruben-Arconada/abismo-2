@@ -1,12 +1,13 @@
 /* ABISMO — service worker (offline; network-first para el HTML, cache-first para estáticos) */
-const CACHE = "abismo-v2";
+const CACHE = "abismo-v3";
 const ASSETS = [
   ".",
   "index.html",
   "manifest.webmanifest",
   "icon-192.png",
   "icon-512.png",
-  "apple-touch-icon.png"
+  "apple-touch-icon.png",
+  "abismo-portada.jpg"
 ];
 
 self.addEventListener("install", e => {

@@ -10,6 +10,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ABISMO">
 <meta name="description" content="Una bola de bolos se fuga de la bolera. Corre por las plataformas sobre el abismo y llega lo más lejos que puedas.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="ABISMO — la bola de bolos aventurera">
+<meta property="og:description" content="Una bola de bolos se fuga de la bolera. Corre por las plataformas sobre el abismo. ¿Hasta dónde llegarás?">
+<meta property="og:url" content="https://ruben-arconada.github.io/abismo/">
+<meta property="og:image" content="https://ruben-arconada.github.io/abismo/abismo-og.jpg">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -39,12 +45,27 @@
     text-align:center;font-weight:700;letter-spacing:.02em}
   #rotate span{font-size:44px}
   @media (orientation:landscape) and (max-height:520px){ #rotate{display:flex} }
+  /* Portada / pantalla de inicio */
+  #cover{position:fixed;inset:0;z-index:8;background:#04050a center/cover no-repeat;
+    background-image:url("abismo-portada.jpg");transition:opacity .5s ease}
+  #cover::after{content:"";position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(to bottom,rgba(4,5,10,.5),transparent 24%,transparent 64%,rgba(4,5,10,.94))}
+  #cover.hide{opacity:0;pointer-events:none}
+  #coverTitle{position:absolute;top:calc(var(--sat) + 22px);left:0;right:0;text-align:center;
+    font-weight:800;font-size:15vw;letter-spacing:.06em;color:#fff;text-shadow:0 3px 22px rgba(0,0,0,.75)}
+  #coverPlay{position:absolute;bottom:calc(var(--sab) + 34px);left:50%;transform:translateX(-50%);
+    font-weight:700;font-size:4.4vw;letter-spacing:.08em;color:#fff;white-space:nowrap;
+    background:rgba(4,5,10,.55);padding:11px 24px;border-radius:999px;
+    -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);animation:coverpulse 1.3s ease-in-out infinite}
+  @keyframes coverpulse{0%,100%{opacity:.6}50%{opacity:1}}
+  @media (prefers-reduced-motion:reduce){#coverPlay{animation:none}}
 </style>
 </head>
 <body>
   <div class="stage"><canvas id="c" width="360" height="620" aria-label="Juego Abismo"></canvas></div>
   <button id="mute" aria-label="Silenciar">🔊</button>
   <div id="rotate"><span>🔄</span>Gira el móvil en vertical</div>
+  <div id="cover"><div id="coverTitle">ABISMO</div><div id="coverPlay">▶  TOCA PARA JUGAR</div></div>
 <script>
 (() => {
   "use strict";
@@ -423,28 +444,28 @@
     const sy=bp.y;
     const grow=(state===S.FALL)?clamp(1+ballY*0.9,0.05,1):(1+ballY*0.9);
     const rad=Math.max(2,R*sB*grow);
-    // esfera brillante (bola de bolos azul)
+    // esfera brillante (bola de bolos morada, a juego con el icono/portada)
     const grd=g.createRadialGradient(bp.x-rad*0.34,sy-rad*0.40,rad*0.06, bp.x,sy,rad);
-    grd.addColorStop(0,"#eaf4ff"); grd.addColorStop(0.26,"#5f9fe0"); grd.addColorStop(0.60,"#2a54a8"); grd.addColorStop(1,"#0a1838");
+    grd.addColorStop(0,"#f0e6ff"); grd.addColorStop(0.26,"#9a76d8"); grd.addColorStop(0.60,"#5b3aa0"); grd.addColorStop(1,"#241546");
     g.beginPath(); g.arc(bp.x,sy,rad,0,Math.PI*2); g.fillStyle=grd; g.fill();
     g.save(); g.beginPath(); g.arc(bp.x,sy,rad,0,Math.PI*2); g.clip();
     // veta de mármol sutil
-    g.globalAlpha=0.16; g.strokeStyle="#cfe4ff"; g.lineWidth=rad*0.12;
+    g.globalAlpha=0.16; g.strokeStyle="#e2d2ff"; g.lineWidth=rad*0.12;
     g.beginPath(); g.arc(bp.x+rad*0.25,sy+rad*0.15,rad*0.95,Math.PI*0.85,Math.PI*1.65); g.stroke(); g.globalAlpha=1;
     // agujeros de dedos (giran con el rodar)
     const roll=ballZ*3.0;
     for(const [ox,ph] of HOLES){ const th=roll+ph, face=Math.sin(th); if(face<=0.12) continue;
       const hx=bp.x+ox*rad*(0.55+0.45*face), hy=sy+Math.cos(th)*rad*0.70, hr=rad*0.15*face;
       g.beginPath(); g.ellipse(hx,hy,hr,hr*(0.5+0.5*face),0,0,Math.PI*2);
-      g.fillStyle=`rgba(6,12,28,${0.92*face})`; g.fill();
-      g.lineWidth=Math.max(0.5,rad*0.028); g.strokeStyle=`rgba(200,222,255,${0.28*face})`;
+      g.fillStyle=`rgba(14,8,26,${0.92*face})`; g.fill();
+      g.lineWidth=Math.max(0.5,rad*0.028); g.strokeStyle=`rgba(214,198,255,${0.28*face})`;
       g.beginPath(); g.ellipse(hx,hy,hr,hr*(0.5+0.5*face),0,Math.PI*0.1,Math.PI*0.9); g.stroke(); }
     g.restore();
     // luz de borde (separa la bola de fondos oscuros como la cueva o la lava)
-    g.lineWidth=Math.max(1,rad*0.05); g.strokeStyle="rgba(150,195,255,0.45)";
+    g.lineWidth=Math.max(1,rad*0.05); g.strokeStyle="rgba(198,176,255,0.45)";
     g.beginPath(); g.arc(bp.x,sy,rad*0.97,Math.PI*0.08,Math.PI*0.62); g.stroke();
     // contorno + brillo especular
-    g.lineWidth=1.2; g.strokeStyle="rgba(5,12,36,0.5)"; g.beginPath(); g.arc(bp.x,sy,rad,0,Math.PI*2); g.stroke();
+    g.lineWidth=1.2; g.strokeStyle="rgba(20,10,44,0.5)"; g.beginPath(); g.arc(bp.x,sy,rad,0,Math.PI*2); g.stroke();
     g.beginPath(); g.arc(bp.x-rad*0.34,sy-rad*0.40,rad*0.18,0,Math.PI*2); g.fillStyle="rgba(255,255,255,0.9)"; g.fill();
   }
 
@@ -503,6 +524,12 @@
 
   /* ---------- Entrada ---------- */
   const toCanvas=e=>{ const r=cv.getBoundingClientRect(); return {x:(e.clientX-r.left)*(W/r.width), y:(e.clientY-r.top)*(H/r.height)}; };
+  // Portada: al tocar arranca el juego y se desvanece
+  const cover=document.getElementById("cover");
+  function dismissCover(){ if(!cover||cover.classList.contains("hide")) return;
+    audioResume(); firstGestureFullscreen(); if(state===S.READY) start();
+    cover.classList.add("hide"); setTimeout(()=>{ if(cover) cover.style.display="none"; },600); }
+  if(cover) cover.addEventListener("pointerdown",e=>{ e.preventDefault(); dismissCover(); });
   cv.addEventListener("pointerdown",e=>{ e.preventDefault(); audioResume();
     if(state===S.READY||state===S.OVER){ firstGestureFullscreen(); start(); return; }
     if(state!==S.RUN) return; const p=toCanvas(e);
@@ -515,7 +542,7 @@
   addEventListener("keydown",e=>{
     if(e.key==="ArrowLeft"){kL=true;e.preventDefault();}
     else if(e.key==="ArrowRight"){kR=true;e.preventDefault();}
-    else if(e.key===" "||e.key==="ArrowUp"||e.key==="Enter"){ if(!e.repeat){ audioResume(); if(state===S.READY||state===S.OVER) start(); else pressJump(); } e.preventDefault(); }
+    else if(e.key===" "||e.key==="ArrowUp"||e.key==="Enter"){ if(!e.repeat){ audioResume(); if(cover && !cover.classList.contains("hide")) dismissCover(); else if(state===S.READY||state===S.OVER) start(); else pressJump(); } e.preventDefault(); }
   },{passive:false});
   addEventListener("keyup",e=>{ if(e.key==="ArrowLeft")kL=false; else if(e.key==="ArrowRight")kR=false;
     else if(e.key===" "||e.key==="ArrowUp"||e.key==="Enter"){ jumpHeld=false; } });

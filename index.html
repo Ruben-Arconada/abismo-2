@@ -45,24 +45,26 @@
     text-align:center;font-weight:700;letter-spacing:.02em}
   #rotate span{font-size:44px}
   @media (orientation:landscape) and (max-height:520px){ #rotate{display:flex} }
-  /* Portada / pantalla de inicio */
-  #cover{position:fixed;inset:0;z-index:8;background:#04050a center/cover no-repeat;
-    background-image:url("abismo-portada.jpg");transition:opacity .5s ease}
-  #cover::after{content:"";position:absolute;inset:0;pointer-events:none;
-    background:linear-gradient(to bottom,rgba(4,5,10,.5),transparent 24%,transparent 64%,rgba(4,5,10,.94))}
+  /* Portada / pantalla de inicio: ilustración arriba, franja oscura abajo con los botones */
+  #cover{position:fixed;inset:0;z-index:8;background:#04050a;display:flex;flex-direction:column;
+    align-items:center;overflow:hidden;transition:opacity .5s ease}
   #cover.hide{opacity:0;pointer-events:none}
-  #coverTitle{position:absolute;top:calc(var(--sat) + 22px);left:0;right:0;text-align:center;
+  #coverImg{max-width:100%;max-height:72vh;display:block;flex:0 0 auto;
+    -webkit-mask-image:linear-gradient(to bottom,#000 90%,transparent);
+    mask-image:linear-gradient(to bottom,#000 90%,transparent)}
+  #coverTitle{position:absolute;top:calc(var(--sat) + 22px);left:0;right:0;text-align:center;z-index:2;
     font-weight:800;font-size:15vw;letter-spacing:.06em;color:#fff;text-shadow:0 3px 22px rgba(0,0,0,.75)}
-  #coverPlay{position:absolute;bottom:calc(var(--sab) + 34px);left:50%;transform:translateX(-50%);
-    font-weight:700;font-size:4.4vw;letter-spacing:.08em;color:#fff;white-space:nowrap;
-    background:rgba(4,5,10,.55);padding:11px 24px;border-radius:999px;
-    -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);animation:coverpulse 1.3s ease-in-out infinite}
-  @keyframes coverpulse{0%,100%{opacity:.6}50%{opacity:1}}
+  #coverUI{flex:1 1 auto;min-height:0;width:100%;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:16px;padding:6px 12px calc(var(--sab) + 20px)}
+  #coverPlay{font-weight:800;font-size:4.8vw;letter-spacing:.08em;color:#04050a;white-space:nowrap;
+    background:#fff;padding:13px 30px;border-radius:999px;box-shadow:0 6px 22px rgba(0,0,0,.45);
+    animation:coverpulse 1.4s ease-in-out infinite}
+  @keyframes coverpulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
   @media (prefers-reduced-motion:reduce){#coverPlay{animation:none}}
   /* Selector de control en la portada */
-  #coverCtrl{position:absolute;left:0;right:0;bottom:calc(var(--sab) + 94px);display:flex;gap:8px;justify-content:center;z-index:1;flex-wrap:wrap;padding:0 12px}
-  #coverCtrl button{font:700 12px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;padding:9px 13px;border:1.5px solid rgba(255,255,255,.35);border-radius:999px;background:rgba(4,5,10,.45);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
-  #coverCtrl button.on{background:rgba(255,255,255,.92);color:#111;border-color:#fff}
+  #coverCtrl{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  #coverCtrl button{font:700 13px/1 "Helvetica Neue",Arial,sans-serif;color:#fff;padding:10px 15px;border:1.5px solid rgba(255,255,255,.4);border-radius:999px;background:rgba(255,255,255,.08)}
+  #coverCtrl button.on{background:rgba(255,255,255,.95);color:#111;border-color:#fff}
   /* Engranaje de ajustes */
   #gear{position:fixed;z-index:5;top:calc(var(--sat) + 6px);right:calc(var(--sar) + 52px);
     width:38px;height:38px;padding:0;border:0;border-radius:50%;background:rgba(0,0,0,.28);color:#fff;font-size:17px;
@@ -88,8 +90,11 @@
   <button id="mute" aria-label="Silenciar">🔊</button>
   <div id="rotate"><span>🔄</span>Gira el móvil en vertical</div>
   <div id="cover"><div id="coverTitle">ABISMO</div>
-    <div id="coverCtrl"><button data-c="diestro">Diestro</button><button data-c="zurdo">Zurdo</button><button data-c="desliz">Deslizar</button></div>
-    <div id="coverPlay">▶  TOCA PARA JUGAR</div></div>
+    <img id="coverImg" src="abismo-portada.jpg" alt="">
+    <div id="coverUI">
+      <div id="coverCtrl"><button data-c="diestro">Diestro</button><button data-c="zurdo">Zurdo</button><button data-c="desliz">Deslizar</button></div>
+      <div id="coverPlay">▶  TOCA PARA JUGAR</div>
+    </div></div>
   <button id="gear" aria-label="Ajustes">⚙️</button>
   <div id="settings"><div id="settingsBox">
     <h3>Controles</h3><p>Elige cómo mover y saltar</p>

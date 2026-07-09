@@ -325,7 +325,10 @@ renderer.outputColorSpace=THREE.SRGBColorSpace;
 renderer.shadowMap.enabled=true;
 renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 // si el SO mata el contexto WebGL (memoria, segundo plano), recargamos con contexto fresco
-glCv.addEventListener("webglcontextlost",e=>{ e.preventDefault(); location.reload(); });
+// (con guardia: si se pierde 3 veces seguidas, mostramos el aviso en vez de entrar en bucle)
+glCv.addEventListener("webglcontextlost",e=>{ e.preventDefault();
+  let n=0; try{ n=(parseInt(sessionStorage.getItem("abismo2-ctxlost"))||0)+1; sessionStorage.setItem("abismo2-ctxlost",n); }catch(err){}
+  if(n>=3) document.getElementById("err").style.display="flex"; else location.reload(); });
 
 scene=new THREE.Scene();
 scene.fog=new THREE.Fog(0x000000, 5, 30);
@@ -942,10 +945,13 @@ function cardR(title,sub,btn){
 /* ---------- Bucle principal ---------- */
 let last=performance.now();
 let fpsAcc=0, fpsN=0, fpsT=0, quality=2;
+let uptime=0, ctxCleared=false;
 function autoQuality(dt){
+  uptime+=dt;   // 10 s estables -> el contador de contextos perdidos se olvida
+  if(!ctxCleared && uptime>10){ ctxCleared=true; try{ sessionStorage.removeItem("abismo2-ctxlost"); }catch(e){} }
   fpsAcc+=1/Math.max(dt,0.001); fpsN++; fpsT+=dt;
   if(fpsT>2.5){ const fps=fpsAcc/fpsN; fpsAcc=0; fpsN=0; fpsT=0;
-    if(fps<40 && quality===2){ quality=1; usePost=false; composer.dispose(); }   // 1º: fuera bloom (y su VRAM)
+    if(fps<40 && quality===2){ quality=1; usePost=false; bloomPass.dispose(); composer.dispose(); }   // 1º: fuera bloom (y su VRAM, mips incluidos)
     else if(fps<34 && quality===1){ quality=0; effDPR=Math.min(effDPR,1.25); renderer.setPixelRatio(effDPR); } // 2º: menos resolución
   }
 }

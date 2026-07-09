@@ -1,5 +1,5 @@
-/* ABISMO — service worker (offline; network-first para el HTML, cache-first para estáticos) */
-const CACHE = "abismo-v3";
+/* ABISMO 2.0 — service worker (offline; network-first para el HTML, cache-first para estáticos y módulos 3D del CDN) */
+const CACHE = "abismo2-v1";
 const ASSETS = [
   ".",
   "index.html",
@@ -7,11 +7,17 @@ const ASSETS = [
   "icon-192.png",
   "icon-512.png",
   "apple-touch-icon.png",
-  "abismo-portada.jpg"
+  "abismo-portada.jpg",
+  "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js"
 ];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // allSettled: si un módulo del CDN falla, la instalación no se rompe
+  e.waitUntil(
+    caches.open(CACHE)
+      .then(c => Promise.allSettled(ASSETS.map(a => c.add(a))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", e => {
@@ -36,7 +42,7 @@ self.addEventListener("fetch", e => {
     );
     return;
   }
-  // Estáticos (iconos, manifest): cache-first.
+  // Estáticos (iconos, manifest, módulos three.js del CDN): cache-first.
   e.respondWith(
     caches.match(req).then(hit => hit || fetch(req).then(resp => {
       const copy = resp.clone();

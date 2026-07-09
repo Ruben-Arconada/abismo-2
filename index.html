@@ -324,6 +324,8 @@ renderer.toneMappingExposure=1.0;
 renderer.outputColorSpace=THREE.SRGBColorSpace;
 renderer.shadowMap.enabled=true;
 renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+// si el SO mata el contexto WebGL (memoria, segundo plano), recargamos con contexto fresco
+glCv.addEventListener("webglcontextlost",e=>{ e.preventDefault(); location.reload(); });
 
 scene=new THREE.Scene();
 scene.fog=new THREE.Fog(0x000000, 5, 30);
@@ -342,7 +344,7 @@ composer.addPass(new OutputPass());
 /* Luces */
 const dirLight=new THREE.DirectionalLight(0xffffff, 2.6);
 dirLight.castShadow=true;
-dirLight.shadow.mapSize.set(2048,2048);
+dirLight.shadow.mapSize.set(1024,1024);
 dirLight.shadow.camera.left=-9; dirLight.shadow.camera.right=9;
 dirLight.shadow.camera.top=9; dirLight.shadow.camera.bottom=-9;
 dirLight.shadow.camera.near=1; dirLight.shadow.camera.far=45;
@@ -661,7 +663,7 @@ function mkCelestial(){
   disc.rotation.y=Math.PI;
   const halo=glowSprite([255,250,220],5.2,0.55); halo.material.fog=false;
   grp.add(disc); grp.add(halo); grp.userData={disc,halo};
-  grp.renderOrder=-1.5; far.add(grp);
+  disc.renderOrder=-1.5; halo.renderOrder=-1.5; far.add(grp);   // renderOrder no se hereda del Group
   return grp;
 }
 const celA=mkCelestial(), celB=mkCelestial();
@@ -674,6 +676,7 @@ function setCelestial(grp,spec,alpha){
   if(!celTexCache[key]) celTexCache[key]=celestialTexture(spec.col,spec.c==="moon");
   if(disc.material.map!==celTexCache[key]){ disc.material.map=celTexCache[key]; disc.material.needsUpdate=true; }
   disc.material.opacity=alpha; halo.material.opacity=0.3*alpha;
+  halo.material.color.copy(col3(spec.col));   // halo del color del astro (luna fría, sol cálido)
   const r=spec.r/24*10;
   disc.scale.setScalar(r); halo.scale.setScalar(r*2.9);
   grp.position.set(-(spec.x-0.5)*200, (1-spec.y)*40+7, 185);   // X espejada: mirando +Z, +X queda a la izquierda
@@ -697,7 +700,7 @@ for(let i=0;i<8;i++){
   const s2=0.5+Math.random();
   sp.scale.set(2.4*s2,1.5*s2,1);
   sp.userData={x:Math.random(),y:0.1+Math.random()*0.65,ph:Math.random()*6.28,sp:0.03+Math.random()*0.03};
-  sp.renderOrder=-1.2; far.add(sp); bats.push(sp);
+  sp.renderOrder=-0.9; far.add(sp); bats.push(sp);   // por encima del backdrop: vuelan sobre la silueta
 }
 
 /* ---------- Partículas: motas, nieve y brasas ---------- */
@@ -723,7 +726,9 @@ const embers=mkPoints(130,0.05,0xff9040,true,0);
   for(let i=0;i<130;i++){ a[i*3]=rand(-8,8); a[i*3+1]=rand(-4,5); a[i*3+2]=rand(0,24); } }
 function stepParticles(dt,pal){
   const wSnow=nameWeight(pal,"MONTAÑA NEVADA"), wVolc=nameWeight(pal,"VOLCÁNICA");
-  motes.material.opacity=0.3*(lum(pal.skyTop)>150?0.7:1);
+  const lightSky=lum(pal.skyTop)>150;   // de día, motas oscuras (como el original); de noche, claras
+  motes.material.color.setHex(lightSky?0x3c4658:0xcfd8ff);
+  motes.material.opacity=0.3;
   { const a=motes.geometry.attributes.position.array;
     for(let i=0;i<64;i++){ a[i*3+1]+=Math.sin(idleT*0.8+i)*0.0012;
       if(a[i*3+2]<camZ+0.4){ a[i*3+2]+=VIEW_AHEAD+rand(0,6); a[i*3]=rand(-8,8); a[i*3+1]=rand(-2.5,3); } }
@@ -795,7 +800,7 @@ function removeCracks(){ if(crackMesh){ scene.remove(crackMesh);
   crackMesh.material.map.dispose(); crackMesh.material.dispose(); crackMesh.geometry.dispose(); crackMesh=null; } }
 
 /* ---------- Ajuste a pantalla ---------- */
-let fovYrad=1.2, pitch=0;
+let fovYrad=1.2, pitch=0, effDPR=0;   // effDPR: resolución 3D efectiva; autoQuality la baja y resize la respeta
 function readSafe(){
   const cs=getComputedStyle(document.documentElement);
   const px=n=>parseFloat(cs.getPropertyValue(n))||0;
@@ -815,9 +820,11 @@ function resize(){
   camera.fov=THREE.MathUtils.radToDeg(fovYrad); camera.aspect=aspect;
   pitch=(0.5-0.16)*fovYrad;                        // horizonte al 16% desde arriba
   camera.updateProjectionMatrix();
-  renderer.setPixelRatio(DPR);
+  // en táctil arrancamos a 1.5x (autoQuality puede bajar más; nunca se restaura sola)
+  if(!effDPR) effDPR=Math.min(DPR, navigator.maxTouchPoints>0?1.5:2);
+  renderer.setPixelRatio(effDPR);
   renderer.setSize(cssW,cssH,false);
-  composer.setSize(cssW*DPR,cssH*DPR);
+  if(usePost){ composer.setPixelRatio(effDPR); composer.setSize(cssW,cssH); }
 }
 
 /* ---------- Sincronizar la escena con el estado del juego ---------- */
@@ -938,8 +945,8 @@ let fpsAcc=0, fpsN=0, fpsT=0, quality=2;
 function autoQuality(dt){
   fpsAcc+=1/Math.max(dt,0.001); fpsN++; fpsT+=dt;
   if(fpsT>2.5){ const fps=fpsAcc/fpsN; fpsAcc=0; fpsN=0; fpsT=0;
-    if(fps<40 && quality===2){ quality=1; usePost=false; }                       // 1º: fuera bloom
-    else if(fps<34 && quality===1){ quality=0; renderer.setPixelRatio(Math.min(DPR,1.3)); } // 2º: menos resolución
+    if(fps<40 && quality===2){ quality=1; usePost=false; composer.dispose(); }   // 1º: fuera bloom (y su VRAM)
+    else if(fps<34 && quality===1){ quality=0; effDPR=Math.min(effDPR,1.25); renderer.setPixelRatio(effDPR); } // 2º: menos resolución
   }
 }
 function loop(now){
@@ -978,6 +985,7 @@ document.getElementById("settingsClose").addEventListener("pointerdown",e=>{ e.p
 settings.addEventListener("pointerdown",e=>{ if(e.target===settings){ e.preventDefault(); closeSettings(); } });
 updateCtrlUI();
 uiCv.addEventListener("pointerdown",e=>{ e.preventDefault(); audioResume();
+  try{ uiCv.setPointerCapture(e.pointerId); }catch(err){}   // no perder el pointerup si sueltan fuera de la ventana
   if(state===S.READY||state===S.OVER){ firstGestureFullscreen(); start(); return; }
   if(state===S.CRASH||state===S.FALL){ toOver(); return; }
   if(state!==S.RUN||paused) return; const p=toCanvas(e);

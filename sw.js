@@ -1,5 +1,6 @@
 /* ABISMO 2.0 — service worker (offline; network-first para el HTML, cache-first para estáticos y módulos 3D del CDN) */
-const CACHE = "abismo2-v1";
+const CACHE = "abismo2-v2";
+const CDN = "https://cdn.jsdelivr.net/npm/three@0.161.0/";
 const ASSETS = [
   ".",
   "index.html",
@@ -8,7 +9,19 @@ const ASSETS = [
   "icon-512.png",
   "apple-touch-icon.png",
   "abismo-portada.jpg",
-  "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js"
+  // three.js + addons con TODAS sus dependencias transitivas (offline desde la primera visita)
+  CDN + "build/three.module.js",
+  CDN + "examples/jsm/postprocessing/EffectComposer.js",
+  CDN + "examples/jsm/postprocessing/RenderPass.js",
+  CDN + "examples/jsm/postprocessing/UnrealBloomPass.js",
+  CDN + "examples/jsm/postprocessing/OutputPass.js",
+  CDN + "examples/jsm/postprocessing/Pass.js",
+  CDN + "examples/jsm/postprocessing/ShaderPass.js",
+  CDN + "examples/jsm/postprocessing/MaskPass.js",
+  CDN + "examples/jsm/shaders/CopyShader.js",
+  CDN + "examples/jsm/shaders/LuminosityHighPassShader.js",
+  CDN + "examples/jsm/shaders/OutputShader.js",
+  CDN + "examples/jsm/environments/RoomEnvironment.js"
 ];
 
 self.addEventListener("install", e => {
@@ -43,11 +56,12 @@ self.addEventListener("fetch", e => {
     return;
   }
   // Estáticos (iconos, manifest, módulos three.js del CDN): cache-first.
+  // Sin fallback a index.html aquí: devolver HTML a un import de JS enmascara el error real.
   e.respondWith(
     caches.match(req).then(hit => hit || fetch(req).then(resp => {
       const copy = resp.clone();
       caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
       return resp;
-    }).catch(() => caches.match("index.html")))
+    }).catch(() => Response.error()))
   );
 });

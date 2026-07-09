@@ -436,9 +436,15 @@ function buildSegment(s){
     pos.push(xl,-BEV_H,z,  xl+BEV_W,0,z,  xr-BEV_W,0,z,  xr,-BEV_H,z);
     const v=z*0.55;
     uv.push(0,v, 0.06,v, 0.94,v, 1,v);
-    // canto horneado como el original: bisel -X (derecha en pantalla) claro, +X oscuro
-    vc.push(1.12,1.12,1.12, 1,1,1, 1,1,1, 0.85,0.85,0.85);
+    // canto horneado como el original (±30%): bisel -X (derecha en pantalla) claro, +X oscuro
+    vc.push(1.3,1.3,1.3, 1,1,1, 1,1,1, 0.72,0.72,0.72);
   }
+  // bisel FRONTAL inclinado (el "labio" del original, drawBevel): une el borde superior con la tapa
+  { const bF=hw(s.z0), xlF=s.xc-bF, xrF=s.xc+bF, vF=s.z0*0.55, fb=(n+1)*4;
+    pos.push(xlF+BEV_W,0,s.z0,  xrF-BEV_W,0,s.z0,  xrF,-BEV_H,s.z0,  xlF,-BEV_H,s.z0);
+    uv.push(0.06,vF, 0.94,vF, 1,vF, 0,vF);
+    vc.push(0.97,0.97,0.97, 0.97,0.97,0.97, 0.97,0.97,0.97, 0.97,0.97,0.97);
+    idx.push(fb,fb+1,fb+2, fb,fb+2,fb+3); }   // CCW mirando desde la cámara (-Z)
   for(let i=0;i<n;i++){ const r0=i*4, r1=(i+1)*4;
     for(let q=0;q<3;q++){ const a=r0+q,bq=r0+q+1,c=r1+q+1,d=r1+q;
       idx.push(a,c,bq, a,d,c); } }   // orden CCW visto desde ARRIBA: si no, el culling descarta la superficie
@@ -465,7 +471,7 @@ function buildSegment(s){
     pushWall(s.xc-hw(za),za, s.xc-hw(zb),zb, 1.06);   // pared -X: derecha en pantalla (luz)
     pushWall(s.xc+hw(za),za, s.xc+hw(zb),zb, 0.78);   // pared +X: izquierda en pantalla (sombra)
   }
-  pushWall(s.xc-hw(s.z0),s.z0, s.xc+hw(s.z0),s.z0, 0.88, 0);   // tapa frontal desde y=0: cubre también la ranura del bisel
+  pushWall(s.xc-hw(s.z0),s.z0, s.xc+hw(s.z0),s.z0, 0.88);   // tapa frontal desde -BEV_H: arriba la remata el bisel frontal, como el original
   const gs=new THREE.BufferGeometry();
   gs.setAttribute("position",new THREE.Float32BufferAttribute(p2,3));
   gs.setAttribute("uv",new THREE.Float32BufferAttribute(u2,2));
@@ -1114,7 +1120,7 @@ document.addEventListener("visibilitychange",()=>{ if(!document.hidden) last=per
 function jumpTo(m){
   if(cover){ cover.classList.add("hide"); cover.style.display="none"; }
   audioResume(); if(state!==S.RUN) start();
-  clearSegs();
+  clearSegs(); removeCracks();
   ballZ=m; ballX=0; ballY=0; vy=0; jumping=false; falling=false; fallT=0;
   const s0={z0:ballZ-2,z1:ballZ+6,xc:0,half:HALF,props:makeProps(ballZ-2,ballZ+6,0)};
   segs=[s0]; buildSegment(s0);

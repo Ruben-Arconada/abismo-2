@@ -167,6 +167,7 @@ const rgb=c=>`rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
 const rgba=(c,a)=>`rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
 const lum=c=>0.2126*c[0]+0.7152*c[1]+0.0722*c[2];
 const col3=c=>new THREE.Color(c[0]/255,c[1]/255,c[2]/255);
+const col3s=c=>new THREE.Color().setRGB(c[0]/255,c[1]/255,c[2]/255,THREE.SRGBColorSpace);   // sRGB→lineal (tonos exactos del original)
 
 /* ---------- Sonido (WebAudio, generado por código) + vibración ---------- */
 let actx=null, master=null, muted=false;
@@ -278,7 +279,9 @@ function hitWall(Bs){
   ballX=crashX; ballZ=Bs.z0; state=S.CRASH; crashT=0; shake=0.5; spawnCracks(); burst(crashX,crashY,Bs.z0-0.1,14); sfxCrash();
 }
 function toOver(){ best=Math.max(best,Math.floor(ballZ)); try{ localStorage.setItem("abismo2-best",best); }catch(e){} state=S.OVER; sfxOver(); }
-function leanInput(){ let v = ctrl==="desliz" ? swipeVal : (joy.active?joy.val:0); v+=(kR?1:0)-(kL?1:0); return clamp(v,-1,1); }
+// La cámara mira +Z, así que la X del mundo sale ESPEJADA en pantalla: se niega la entrada
+// para que "derecha" en pantalla sea derecha de verdad (el mundo es simétrico: no cambia nada más).
+function leanInput(){ let v = ctrl==="desliz" ? swipeVal : (joy.active?joy.val:0); v+=(kR?1:0)-(kL?1:0); return -clamp(v,-1,1); }
 
 function update(dt){
   idleT+=dt; if(landFx>0) landFx-=dt; if(shake>0) shake=Math.max(0,shake-dt*1.8);
@@ -391,8 +394,8 @@ function topTexture(bi){
 /* Faldón lateral: blanco→transparente con estratos (se tiñe con material.color) */
 const sideTex=canvasTex(128,256,(x,w,h)=>{
   const gr=x.createLinearGradient(0,0,0,h);
-  gr.addColorStop(0,"rgba(255,255,255,1)"); gr.addColorStop(0.5,"rgba(255,255,255,0.96)");
-  gr.addColorStop(0.82,"rgba(255,255,255,0.5)"); gr.addColorStop(1,"rgba(255,255,255,0)");
+  gr.addColorStop(0,"rgba(255,255,255,1)"); gr.addColorStop(0.55,"rgba(255,255,255,1)");
+  gr.addColorStop(0.85,"rgba(255,255,255,0.6)"); gr.addColorStop(1,"rgba(255,255,255,0)");
   x.fillRect(0,0,w,h); x.clearRect(0,0,w,h); x.fillStyle=gr; x.fillRect(0,0,w,h);
   x.globalCompositeOperation="source-atop";
   for(let i=0;i<26;i++){ const y=Math.random()*h*0.85, a=0.05+Math.random()*0.1;
@@ -407,8 +410,10 @@ for(let i=0;i<B.length;i++){
   const t=topTexture(i); t.wrapS=t.wrapT=THREE.RepeatWrapping;
   // color 0.66: compensa la suma de luces PBR para que los tonos queden como en el original
   topMats.push(new THREE.MeshStandardMaterial({map:t, color:new THREE.Color(0.66,0.66,0.66), roughness:0.92, metalness:0.02}));
-  sideMats.push(new THREE.MeshStandardMaterial({map:sideTex, color:col3(B[i].side).multiplyScalar(0.66),
-    roughness:0.95, metalness:0, transparent:true, depthWrite:false, side:THREE.DoubleSide}));
+  // Paredes SIN luz dinámica (como el original: sombra/luz precalculada por cara vía vertex colors).
+  // depthWrite + alphaTest evitan el efecto "fantasma"; el degradado alpha viene del mapa.
+  sideMats.push(new THREE.MeshBasicMaterial({map:sideTex, color:col3s(B[i].side), vertexColors:true,
+    transparent:true, depthWrite:true, alphaTest:0.02, side:THREE.DoubleSide}));
 }
 
 /* ---------- Geometría de losas con borde ondulado (como el original) ---------- */
@@ -435,21 +440,25 @@ function buildSegment(s){
   const top=new THREE.Mesh(gt, topMats[bi]);
   top.receiveShadow=true; grp.add(top);
   // --- faldones laterales + tapa frontal (se funden al abismo con alpha)
-  const p2=[], u2=[], i2=[];
-  const pushWall=(x1,z1,x2,z2)=>{ const base=p2.length/3;
+  // shade: luz/sombra horneada por cara, como el original (en pantalla: izquierda sombra, derecha luz;
+  // ojo, la X del mundo está espejada en pantalla, por eso xl lleva el tono claro)
+  const p2=[], u2=[], c2=[], i2=[];
+  const pushWall=(x1,z1,x2,z2,shade)=>{ const base=p2.length/3;
     p2.push(x1,-BEV_H,z1, x2,-BEV_H,z2, x2,-SLAB_D,z2, x1,-SLAB_D,z1);
     u2.push(z1*0.4,0, z2*0.4,0, z2*0.4,1, z1*0.4,1);
+    for(let k=0;k<4;k++) c2.push(shade,shade,shade);
     i2.push(base,base+1,base+2, base,base+2,base+3);
   };
   for(let i=0;i<n;i++){
     const za=s.z0+(s.z1-s.z0)*(i/n), zb=s.z0+(s.z1-s.z0)*((i+1)/n);
-    pushWall(s.xc-hw(za),za, s.xc-hw(zb),zb);
-    pushWall(s.xc+hw(za),za, s.xc+hw(zb),zb);
+    pushWall(s.xc-hw(za),za, s.xc-hw(zb),zb, 1.06);   // pared -X: derecha en pantalla (luz)
+    pushWall(s.xc+hw(za),za, s.xc+hw(zb),zb, 0.78);   // pared +X: izquierda en pantalla (sombra)
   }
-  pushWall(s.xc-hw(s.z0),s.z0, s.xc+hw(s.z0),s.z0);   // tapa frontal (la pared del choque)
+  pushWall(s.xc-hw(s.z0),s.z0, s.xc+hw(s.z0),s.z0, 0.88);   // tapa frontal (la pared del choque)
   const gs=new THREE.BufferGeometry();
   gs.setAttribute("position",new THREE.Float32BufferAttribute(p2,3));
   gs.setAttribute("uv",new THREE.Float32BufferAttribute(u2,2));
+  gs.setAttribute("color",new THREE.Float32BufferAttribute(c2,3));
   gs.setIndex(i2); gs.computeVertexNormals();
   const side=new THREE.Mesh(gs, sideMats[bi]); grp.add(side);
   // --- props 3D en los bordes

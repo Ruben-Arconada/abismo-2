@@ -175,7 +175,7 @@ function audioResume(){
   if(!actx){ try{ actx=new (window.AudioContext||window.webkitAudioContext)();
       master=actx.createGain(); master.gain.value=0.9; master.connect(actx.destination);
     }catch(e){ actx=null; } }
-  if(actx && actx.state==="suspended") actx.resume();
+  if(actx && actx.state!=="running") actx.resume();   // cubre "suspended" y el "interrupted" de Safari iOS
 }
 function tone(freq,dur,o){ o=o||{};
   if(!actx || muted) return;
@@ -337,9 +337,12 @@ scene=new THREE.Scene();
 scene.fog=new THREE.Fog(0x000000, 5, 30);
 camera=new THREE.PerspectiveCamera(70, 0.6, 0.1, 600);
 
+renderer.localClippingEnabled=true;   // para recortar las grietas a la cara de la pared
 const pmrem=new THREE.PMREMGenerator(renderer);
 scene.environment=pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity=0.12;
+pmrem.dispose();
+// OJO: scene.environmentIntensity NO existe en three r161 — la intensidad IBL se controla
+// por material con envMapIntensity (topMats/mkMat 0.45, bola 1.1).
 
 composer=new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene,camera));
@@ -375,10 +378,8 @@ function topTexture(bi){
     const dk=mix(b.top,[0,0,0],0.22), lt=mix(b.top,[255,255,255],0.14);
     noisify(x,w,h,b.top,[dk,lt],420,0.6,2.4,0.5);
     noisify(x,w,h,b.top,[mix(b.decor,b.top,0.45)],60,0.8,3.2,0.55);
-    if(bi===0){ // CIUDAD: línea discontinua central de carretera
-      x.fillStyle="rgba(255,255,255,0.85)";
-      for(let y=8;y<h;y+=64) x.fillRect(w/2-5,y,10,30);
-      x.strokeStyle=rgba(dk,0.8); x.lineWidth=2;   // juntas del asfalto
+    if(bi===0){ // CIUDAD: juntas del asfalto (la línea discontinua es una malla aparte que se funde con pal.line)
+      x.strokeStyle=rgba(dk,0.8); x.lineWidth=2;
       for(let y=0;y<h;y+=85){ x.beginPath(); x.moveTo(0,y); x.lineTo(w,y); x.stroke(); }
     }
     if(bi===3){ // NIEVE: brillo cristalino
@@ -406,15 +407,22 @@ sideTex.wrapS=THREE.RepeatWrapping;
 
 /* Materiales por bioma para las losas */
 const topMats=[], sideMats=[];
+const MAXANISO=Math.min(8, renderer.capabilities.getMaxAnisotropy());
+sideTex.anisotropy=MAXANISO;
 for(let i=0;i<B.length;i++){
   const t=topTexture(i); t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  t.anisotropy=MAXANISO;   // sin esto, el asfalto se disuelve en papilla en ángulo rasante
   // color 0.66: compensa la suma de luces PBR para que los tonos queden como en el original
-  topMats.push(new THREE.MeshStandardMaterial({map:t, color:new THREE.Color(0.66,0.66,0.66), roughness:0.92, metalness:0.02}));
+  topMats.push(new THREE.MeshStandardMaterial({map:t, color:new THREE.Color(0.66,0.66,0.66), roughness:0.92, metalness:0.02,
+    envMapIntensity:0.45, vertexColors:true}));
   // Paredes SIN luz dinámica (como el original: sombra/luz precalculada por cara vía vertex colors).
   // depthWrite + alphaTest evitan el efecto "fantasma"; el degradado alpha viene del mapa.
   sideMats.push(new THREE.MeshBasicMaterial({map:sideTex, color:col3s(B[i].side), vertexColors:true,
     transparent:true, depthWrite:true, alphaTest:0.02, side:THREE.DoubleSide}));
 }
+// Línea discontinua de carretera (CIUDAD): material compartido cuya opacidad sigue a pal.line,
+// para que se funda en la transición de bioma como el drawLane del original.
+const laneMat=new THREE.MeshBasicMaterial({color:0xb9c0c9, transparent:true, opacity:1, depthWrite:false});   // blanco roto: no dispara el bloom
 
 /* ---------- Geometría de losas con borde ondulado (como el original) ---------- */
 function buildSegment(s){
@@ -422,19 +430,22 @@ function buildSegment(s){
   const n=Math.max(4, Math.round((s.z1-s.z0)/0.55));
   const hw=z=>s.half+0.16*(0.5+0.5*Math.sin(z*1.9+s.z0));
   // --- superficie superior + biseles
-  const pos=[], uv=[], idx=[];
+  const pos=[], uv=[], vc=[], idx=[];
   for(let i=0;i<=n;i++){
     const z=s.z0+(s.z1-s.z0)*(i/n), b=hw(z), xl=s.xc-b, xr=s.xc+b;
     pos.push(xl,-BEV_H,z,  xl+BEV_W,0,z,  xr-BEV_W,0,z,  xr,-BEV_H,z);
     const v=z*0.55;
     uv.push(0,v, 0.06,v, 0.94,v, 1,v);
+    // canto horneado como el original: bisel -X (derecha en pantalla) claro, +X oscuro
+    vc.push(1.12,1.12,1.12, 1,1,1, 1,1,1, 0.85,0.85,0.85);
   }
   for(let i=0;i<n;i++){ const r0=i*4, r1=(i+1)*4;
     for(let q=0;q<3;q++){ const a=r0+q,bq=r0+q+1,c=r1+q+1,d=r1+q;
-      idx.push(a,bq,c, a,c,d); } }
+      idx.push(a,c,bq, a,d,c); } }   // orden CCW visto desde ARRIBA: si no, el culling descarta la superficie
   const gt=new THREE.BufferGeometry();
   gt.setAttribute("position",new THREE.Float32BufferAttribute(pos,3));
   gt.setAttribute("uv",new THREE.Float32BufferAttribute(uv,2));
+  gt.setAttribute("color",new THREE.Float32BufferAttribute(vc,3));
   gt.setIndex(idx); gt.computeVertexNormals();
   const bi=biomeIdxAt(s.z0);
   const top=new THREE.Mesh(gt, topMats[bi]);
@@ -443,9 +454,9 @@ function buildSegment(s){
   // shade: luz/sombra horneada por cara, como el original (en pantalla: izquierda sombra, derecha luz;
   // ojo, la X del mundo está espejada en pantalla, por eso xl lleva el tono claro)
   const p2=[], u2=[], c2=[], i2=[];
-  const pushWall=(x1,z1,x2,z2,shade)=>{ const base=p2.length/3;
-    p2.push(x1,-BEV_H,z1, x2,-BEV_H,z2, x2,-SLAB_D,z2, x1,-SLAB_D,z1);
-    u2.push(z1*0.4,0, z2*0.4,0, z2*0.4,1, z1*0.4,1);
+  const pushWall=(x1,z1,x2,z2,shade,yTop)=>{ const base=p2.length/3, yA=yTop===undefined?-BEV_H:yTop;
+    p2.push(x1,yA,z1, x2,yA,z2, x2,-SLAB_D,z2, x1,-SLAB_D,z1);
+    u2.push(z1*0.4,1, z2*0.4,1, z2*0.4,0, z1*0.4,0);   // v=1 arriba: CanvasTexture lleva flipY, así el muro es opaco arriba y se funde abajo
     for(let k=0;k<4;k++) c2.push(shade,shade,shade);
     i2.push(base,base+1,base+2, base,base+2,base+3);
   };
@@ -454,13 +465,22 @@ function buildSegment(s){
     pushWall(s.xc-hw(za),za, s.xc-hw(zb),zb, 1.06);   // pared -X: derecha en pantalla (luz)
     pushWall(s.xc+hw(za),za, s.xc+hw(zb),zb, 0.78);   // pared +X: izquierda en pantalla (sombra)
   }
-  pushWall(s.xc-hw(s.z0),s.z0, s.xc+hw(s.z0),s.z0, 0.88);   // tapa frontal (la pared del choque)
+  pushWall(s.xc-hw(s.z0),s.z0, s.xc+hw(s.z0),s.z0, 0.88, 0);   // tapa frontal desde y=0: cubre también la ranura del bisel
   const gs=new THREE.BufferGeometry();
   gs.setAttribute("position",new THREE.Float32BufferAttribute(p2,3));
   gs.setAttribute("uv",new THREE.Float32BufferAttribute(u2,2));
   gs.setAttribute("color",new THREE.Float32BufferAttribute(c2,3));
   gs.setIndex(i2); gs.computeVertexNormals();
   const side=new THREE.Mesh(gs, sideMats[bi]); grp.add(side);
+  if(bi===0){   // línea discontinua (cadencia del original: paso 1.6, trazo 0.8, semiancho 0.09)
+    const lp=[], li=[]; let lz=Math.ceil(s.z0/1.6)*1.6;
+    for(; lz<s.z1; lz+=1.6){ const zb=Math.min(lz+0.8,s.z1), b4=lp.length/3;
+      lp.push(s.xc-0.09,0.01,lz, s.xc+0.09,0.01,lz, s.xc+0.09,0.01,zb, s.xc-0.09,0.01,zb);
+      li.push(b4,b4+2,b4+1, b4,b4+3,b4+2); }   // CCW visto desde arriba
+    if(lp.length){ const lg=new THREE.BufferGeometry();
+      lg.setAttribute("position",new THREE.Float32BufferAttribute(lp,3)); lg.setIndex(li);
+      const lm=new THREE.Mesh(lg,laneMat); lm.renderOrder=1; grp.add(lm); }
+  }
   // --- props 3D en los bordes
   if(s.props) for(const pr of s.props){
     const m=propTemplates[pr.type].clone();
@@ -480,11 +500,16 @@ function glowSprite(color,scale,op){
   const t=canvasTex(64,64,(x,w,h)=>{ const gr=x.createRadialGradient(32,32,2,32,32,30);
     gr.addColorStop(0,rgba(color,0.85)); gr.addColorStop(1,rgba(color,0));
     x.fillStyle=gr; x.fillRect(0,0,w,h); });
-  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,opacity:op||0.8,
-    blending:THREE.AdditiveBlending,depthWrite:false}));
+  const mat=new THREE.SpriteMaterial({map:t,transparent:true,opacity:op||0.8,
+    blending:THREE.AdditiveBlending,depthWrite:false});
+  // en aditivo, la niebla debe atenuar hacia NEGRO (no sumar el color de la niebla):
+  // si no, los halos lejanos se ven como orbes claros flotando sobre el fondo nublado
+  mat.onBeforeCompile=sh=>{ sh.fragmentShader=sh.fragmentShader.replace('#include <fog_fragment>',
+    '#ifdef USE_FOG\n\tfloat fogFactor=smoothstep(fogNear,fogFar,vFogDepth);\n\tgl_FragColor.rgb*=1.0-fogFactor;\n#endif'); };
+  const sp=new THREE.Sprite(mat);
   sp.scale.setScalar(scale); return sp;
 }
-function mkMat(c,o){ return new THREE.MeshStandardMaterial(Object.assign({color:new THREE.Color(c),roughness:0.85,metalness:0.05,flatShading:true},o||{})); }
+function mkMat(c,o){ return new THREE.MeshStandardMaterial(Object.assign({color:new THREE.Color(c),roughness:0.85,metalness:0.05,flatShading:true,envMapIntensity:0.45},o||{})); }
 const propTemplates={};
 {
   // farola: poste + cabeza luminosa + halo
@@ -565,7 +590,15 @@ const ballTex=canvasTex(512,512,(x,w,h)=>{
 const ballMat=new THREE.MeshPhysicalMaterial({map:ballTex, roughness:0.32, metalness:0.0,
   clearcoat:1.0, clearcoatRoughness:0.12, envMapIntensity:1.1});
 const ball=new THREE.Mesh(new THREE.SphereGeometry(R,42,32), ballMat);
-ball.castShadow=true; scene.add(ball);
+// La bola NO usa shadow map: al saltar, la sombra oblicua se despegaría de la vertical y
+// el jugador la usa para juzgar el aterrizaje. Sombra de contacto tipo blob, como el original.
+ball.castShadow=false; scene.add(ball);
+const blobTex=canvasTex(64,64,(x,w,h)=>{ const gr=x.createRadialGradient(32,32,2,32,32,30);
+  gr.addColorStop(0,"rgba(0,0,0,0.85)"); gr.addColorStop(0.65,"rgba(0,0,0,0.45)"); gr.addColorStop(1,"rgba(0,0,0,0)");
+  x.fillStyle=gr; x.fillRect(0,0,w,h); });
+const blob=new THREE.Mesh(new THREE.CircleGeometry(R*1.45,24),
+  new THREE.MeshBasicMaterial({map:blobTex,transparent:true,depthWrite:false}));
+blob.rotation.x=-Math.PI/2; blob.renderOrder=1; scene.add(blob);
 const ballSpin=new THREE.Group();   // rotación de rodadura desacoplada
 
 /* ---------- Cielo con shader: degradado + abismo luminoso ---------- */
@@ -584,7 +617,10 @@ const sky=new THREE.Mesh(new THREE.SphereGeometry(380,24,18), new THREE.ShaderMa
         c=mix(mix(uHorizon,uVoidTop,0.42),uVoidTop,pow(k,0.4));   // el vacío oscurece enseguida bajo el horizonte
         c=mix(c,uVoidBot,pow(k,1.7)); }
       c+=uGlow*pow(max(0.0,-h),3.4)*uGlowK;
-      gl_FragColor=vec4(c,1.0); }`
+      gl_FragColor=vec4(c,1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`
 }));
 sky.renderOrder=-2;
 
@@ -688,7 +724,7 @@ function setCelestial(grp,spec,alpha){
   if(!celTexCache[key]) celTexCache[key]=celestialTexture(spec.col,spec.c==="moon");
   if(disc.material.map!==celTexCache[key]){ disc.material.map=celTexCache[key]; disc.material.needsUpdate=true; }
   disc.material.opacity=alpha; halo.material.opacity=0.3*alpha;
-  halo.material.color.copy(col3(spec.col));   // halo del color del astro (luna fría, sol cálido)
+  halo.material.color.copy(col3s(spec.col));   // halo del color del astro (luna fría, sol cálido), sRGB→lineal
   const r=spec.r/24*10;
   disc.scale.setScalar(r); halo.scale.setScalar(r*2.9);
   grp.position.set(-(spec.x-0.5)*200, (1-spec.y)*40+7, 185);   // X espejada: mirando +Z, +X queda a la izquierda
@@ -724,7 +760,9 @@ function mkPoints(n,size,color,additive,op){
   geo.setAttribute("position",new THREE.Float32BufferAttribute(new Float32Array(n*3),3));
   const mat=new THREE.PointsMaterial({size,color,transparent:true,opacity:op,map:dotTex,
     blending:additive?THREE.AdditiveBlending:THREE.NormalBlending,depthWrite:false});
-  const pts=new THREE.Points(geo,mat); pts.frustumCulled=false; scene.add(pts);
+  const pts=new THREE.Points(geo,mat); pts.frustumCulled=false;
+  pts.renderOrder=2;   // después de los faldones: si no, los muros (depthWrite) las borran por delante
+  scene.add(pts);
   return pts;
 }
 const motes=mkPoints(64,0.045,0xcfd8ff,false,0.3);
@@ -745,19 +783,19 @@ function stepParticles(dt,pal){
     for(let i=0;i<64;i++){ a[i*3+1]+=Math.sin(idleT*0.8+i)*0.0012;
       if(a[i*3+2]<camZ+0.4){ a[i*3+2]+=VIEW_AHEAD+rand(0,6); a[i*3]=rand(-8,8); a[i*3+1]=rand(-2.5,3); } }
     motes.geometry.attributes.position.needsUpdate=true; }
-  snow.material.opacity=wSnow*0.85;
+  snow.material.opacity=wSnow*0.85; snow.visible=wSnow>0.01;
   if(wSnow>0.01){ const a=snow.geometry.attributes.position.array;
     for(let i=0;i<240;i++){ a[i*3+1]-=dt*(1.1+ (i%5)*0.16); a[i*3]+=Math.sin(idleT*1.7+i)*0.004;
       if(a[i*3+1]<-2){ a[i*3+1]+=13; a[i*3]=rand(-9,9); }
       if(a[i*3+2]<camZ){ a[i*3+2]+=24; } }
     snow.geometry.attributes.position.needsUpdate=true; }
-  embers.material.opacity=wVolc*0.9;
+  embers.material.opacity=wVolc*0.9; embers.visible=wVolc>0.01;
   if(wVolc>0.01){ const a=embers.geometry.attributes.position.array;
     for(let i=0;i<130;i++){ a[i*3+1]+=dt*(0.55+(i%7)*0.09); a[i*3]+=Math.sin(idleT*2.3+i*1.7)*0.006;
       if(a[i*3+1]>5.5){ a[i*3+1]=rand(-4.5,-2.5); a[i*3]=rand(-8,8); }
       if(a[i*3+2]<camZ){ a[i*3+2]+=24; } }
     embers.geometry.attributes.position.needsUpdate=true; }
-  for(const sp of bats){ sp.material.opacity=wVolc;
+  for(const sp of bats){ sp.material.opacity=wVolc; sp.visible=wVolc>0.01;
     if(wVolc>0.01){ const u=sp.userData; const bx=((u.x-idleT*u.sp)%1+1)%1;
       sp.position.set((bx-0.5)*190, 14+u.y*26+Math.sin(idleT*11+u.ph)*0.8, 150); } }
 }
@@ -772,7 +810,7 @@ function burst(x,y,z,n){
     dustV[i]={vx:rand(-0.9,0.9),vy:rand(0.5,1.7),vz:rand(-0.6,0.6),life:0.5+Math.random()*0.3}; done++; }
 }
 function stepDust(dt,pal){
-  dust.material.color.setRGB(pal.top[0]/255,pal.top[1]/255,pal.top[2]/255);
+  dust.material.color.setRGB(pal.top[0]/255,pal.top[1]/255,pal.top[2]/255,THREE.SRGBColorSpace);
   const a=dust.geometry.attributes.position.array;
   for(let i=0;i<26;i++){ const d=dustV[i]; if(d.life<=0) continue;
     d.life-=dt; d.vy-=4.5*dt;
@@ -802,8 +840,16 @@ function spawnCracks(){
       for(let s2=1;s2<=4;s2++){ px=Math.cos(ang)*len*s2/4+rand(-7,7); py=Math.sin(ang)*len*s2/4+rand(-7,7); x.lineTo(px,py); }
       x.stroke(); }
   });
+  // recorte a la cara del muro (equivalente al clip del original): ni por encima del canto ni por los lados
+  const bF=0.16*(0.5+0.5*Math.sin(crashSeg.z0*1.9+crashSeg.z0)), hwF=crashSeg.half+bF-0.03;
   crackMesh=new THREE.Mesh(new THREE.PlaneGeometry(1.9,1.9),
-    new THREE.MeshBasicMaterial({map:t,transparent:true,side:THREE.DoubleSide,depthWrite:false}));
+    new THREE.MeshBasicMaterial({map:t,transparent:true,side:THREE.DoubleSide,depthWrite:false,
+      clippingPlanes:[
+        new THREE.Plane(new THREE.Vector3(0,-1,0),-0.02),
+        new THREE.Plane(new THREE.Vector3(0,1,0),SLAB_D),
+        new THREE.Plane(new THREE.Vector3(1,0,0),-(crashSeg.xc-hwF)),
+        new THREE.Plane(new THREE.Vector3(-1,0,0),crashSeg.xc+hwF)
+      ]}));
   crackMesh.position.set(crashX,crashY,crashSeg.z0-0.012);
   crackMesh.scale.setScalar(0.2);
   scene.add(crackMesh);
@@ -854,14 +900,16 @@ function syncScene(dt,pal){
   skyUni.uGlowK.value=0.9+wVolc*(0.15+0.2*Math.abs(Math.sin(idleT*3)));
   // luces
   dirLight.color.copy(col3(pal.lightCol)); dirLight.intensity=pal.lightInt;
-  dirLight.position.set(ballX+pal.lightPos[0], pal.lightPos[1], ballZ+pal.lightPos[2]);
+  dirLight.position.set(ballX-pal.lightPos[0], pal.lightPos[1], ballZ+pal.lightPos[2]);   // X negada: el astro se dibuja espejado y la luz debe venir de su lado
   dirLight.target.position.set(ballX, 0, ballZ+4);
   hemi.color.copy(col3(pal.skyTop)); hemi.groundColor.copy(col3(mix(pal.voidTop,pal.glow,0.5)));
   hemi.intensity=pal.hemiInt;
-  // siluetas + astros + estrellas
-  backdrops.forEach((m,i)=>{ m.material.opacity=bgWeight(pal,B[i].bg); });
+  // siluetas + astros + estrellas (visible=false con opacidad 0: no gastar fillrate móvil)
+  backdrops.forEach((m,i)=>{ const op=bgWeight(pal,B[i].bg); m.material.opacity=op; m.visible=op>0.005; });
   setCelestial(celA,pal.b0.sky,1-pal.t); setCelestial(celB,pal.b1.sky,pal.t);
   stars.material.opacity=nameWeight(pal,"MONTAÑA NEVADA")*0.85;
+  stars.visible=stars.material.opacity>0.005;
+  laneMat.opacity=pal.line;   // la línea de carretera se funde en la transición, como el original
   // cámara (con temblor en el choque)
   const shx=shake>0?rand(-1,1)*shake*0.05:0, shy=shake>0?rand(-1,1)*shake*0.05:0;
   const cx=ballX*0.3;
@@ -877,13 +925,20 @@ function syncScene(dt,pal){
     const k2=Math.exp(-crashT*10);
     sx=1+0.3*k2; sy=1+0.18*k2; sz=1-0.42*k2;
     bz=crashSeg.z0-R*(1-0.42*k2);
-    ball.position.set(crashX, crashY, bz);
+    ball.position.set(crashX, Math.min(crashY,ballY), bz);   // ballY vivo: el resbalón pared abajo se VE (las grietas quedan en crashY)
   } else {
     if(landFx>0){ const k2=landFx/0.16; sy=1-0.24*k2; sx=sz=1+0.12*k2; }
     ball.position.set(ballX, by, bz);
   }
   ball.scale.set(sx,sy,sz);
   if(state===S.RUN||state===S.READY) ball.rotation.x+= (state===S.RUN?curV():1.2)*dt/R;
+  // sombra de contacto: solo con suelo debajo (como drawShadow del original)
+  const sh=(state===S.RUN||state===S.READY)?segAt(ballZ):null;
+  if(sh && Math.abs(ballX-sh.xc)<=sh.half+0.04){
+    const lift=clamp(ballY,0,2.2), fade=clamp(1-lift*0.40,0.10,1);
+    blob.visible=true; blob.position.set(ballX,0.012,ballZ);
+    blob.material.opacity=0.52*fade; blob.scale.setScalar(1-lift*0.05);
+  } else blob.visible=false;
   // grietas creciendo
   if(crackMesh){ const grow=clamp(crashT/CRASH_DUR,0,1);
     crackMesh.scale.setScalar(0.2+0.8*grow); }
@@ -954,14 +1009,23 @@ function cardR(title,sub,btn){
 /* ---------- Bucle principal ---------- */
 let last=performance.now();
 let fpsAcc=0, fpsN=0, fpsT=0, quality=2;
-let uptime=0, ctxCleared=false;
+let uptime=0, ctxCleared=false, badCount=0;
 function autoQuality(dt){
   uptime+=dt;   // 10 s estables -> el contador de contextos perdidos se olvida
   if(!ctxCleared && uptime>10){ ctxCleared=true; try{ sessionStorage.removeItem("abismo2-ctxlost"); }catch(e){} }
+  // medir solo en juego real: la portada, la pausa o el panel de ajustes falsean los fps
+  const coverVisible=cover && cover.style.display!=="none" && !cover.classList.contains("hide");
+  if(state!==S.RUN || paused || coverVisible){ fpsAcc=0; fpsN=0; fpsT=0; return; }
   fpsAcc+=1/Math.max(dt,0.001); fpsN++; fpsT+=dt;
   if(fpsT>2.5){ const fps=fpsAcc/fpsN; fpsAcc=0; fpsN=0; fpsT=0;
-    if(fps<40 && quality===2){ quality=1; usePost=false; bloomPass.dispose(); composer.dispose(); }   // 1º: fuera bloom (y su VRAM, mips incluidos)
-    else if(fps<34 && quality===1){ quality=0; effDPR=Math.min(effDPR,1.25); renderer.setPixelRatio(effDPR); } // 2º: menos resolución
+    const bad=(quality===2 && fps<40) || (quality===1 && fps<34);
+    badCount=bad?badCount+1:0;
+    if(badCount>=2){ badCount=0;   // dos ventanas malas seguidas: tolera picos puntuales (GC, cambio de bioma)
+      if(quality===2){ quality=1; composer.removePass(bloomPass); bloomPass.dispose(); }   // 1º: fuera bloom; queda RenderPass+OutputPass (misma matemática de color)
+      else if(quality===1){ quality=0; effDPR=Math.min(effDPR,1.25);                        // 2º: menos resolución (también en el composer)
+        renderer.setPixelRatio(effDPR); composer.setPixelRatio(effDPR);
+        composer.setSize(Math.max(1,window.innerWidth),Math.max(1,window.innerHeight)); }
+    }
   }
 }
 function loop(now){
